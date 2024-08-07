@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
+	"slices"
 	"time"
 
 	"github.com/hyperboloide/lk"
@@ -18,11 +20,32 @@ type MyLicence struct {
 
 func main() {
 
-	macAddresses, _ := getMacAddr()
-
-	privateKey, err := lk.NewPrivateKey()
-	if err != nil {
+	if ok, err := createLicenseFile(); err != nil {
 		log.Fatal(err)
+	} else if !ok {
+		log.Fatal("Create license failed!")
+	}
+
+	if ok, err := validateLicenseFile(); err != nil {
+		log.Fatal(err)
+	} else if !ok {
+		log.Fatal("Invalid license!")
+	}
+
+	log.Println("License is valid!")
+}
+
+func createLicenseFile() (bool, error) {
+
+	privateKey, err := readPrivateKey()
+
+	if err != nil {
+		return false, err
+	}
+
+	macAddresses, err := getMacAddr()
+	if err != nil {
+		return false, err
 	}
 
 	doc := MyLicence{
@@ -33,43 +56,83 @@ func main() {
 	// marshall the document to json bytes:
 	docBytes, err := json.Marshal(doc)
 	if err != nil {
-		log.Fatal(err)
+		return false, err
 	}
+
+	log.Println("About to generate license for mac address: ", doc.MacAddress)
 
 	// generate your license with the private key and the document:
 	license, err := lk.NewLicense(privateKey, docBytes)
 	if err != nil {
-		log.Fatal(err)
+		return false, err
 	}
 
 	// encode the new license to b64, this is what you give to your customer.
-	str64, err := license.ToB64String()
+	licenseStr, err := license.ToBytes()
 	if err != nil {
-		log.Fatal(err)
+		return false, err
 	}
 
-	fmt.Println(str64)
+	err = os.WriteFile("license.dat", licenseStr, 0644)
+	if err != nil {
+		return false, err
+	}
 
-	// get the public key. The public key should be hardcoded in your app to check licences.
-	// Do not distribute the private key!
-	publicKey := privateKey.GetPublicKey()
+	return true, nil // success
 
-	// validate the license:
+}
+
+func validateLicenseFile() (bool, error) {
+
+	publicKey, err := readPublicKey()
+
+	if err != nil {
+		return false, err
+	}
+
+	// read the license file:
+	licenseDat, err := os.ReadFile("license.dat")
+	if err != nil {
+		return false, err
+	}
+
+	// decode the license from b64:
+	license, err := lk.LicenseFromBytes(licenseDat)
+	if err != nil {
+		return false, err
+	}
+
+	// verify the license with the public key:
 	if ok, err := license.Verify(publicKey); err != nil {
-		log.Fatal(err)
+		return false, err
 	} else if !ok {
-		log.Fatal("Invalid license signature")
+		return false, fmt.Errorf("Invalid license")
 	}
 
-	// unmarshal the document and check the end date:
-	res := MyLicence{}
-	if err := json.Unmarshal(license.Data, &res); err != nil {
-		log.Fatal(err)
-	} else if res.Expires.Before(time.Now()) {
-		log.Fatalf("License expired on: %s", res.Expires.String())
-	} else {
-		fmt.Printf(`Licensed until %s for device %s \n`, res.Expires.Format("02-Jan-2006 15:04:05"), res.MacAddress)
+	// unmarshall the document:
+	var doc MyLicence
+	err = json.Unmarshal(license.Data, &doc)
+	if err != nil {
+		return false, err
 	}
+
+	// check the document:
+	if doc.Expires.Before(time.Now()) {
+		return false, fmt.Errorf("license expired")
+	}
+
+	macAddresses, err := getMacAddr()
+	if err != nil {
+		return false, err
+	}
+
+	idx := slices.IndexFunc(macAddresses, func(c string) bool { return c == doc.MacAddress })
+
+	if idx == -1 {
+		return false, fmt.Errorf("device not authorized")
+	}
+
+	return true, nil
 }
 
 func getMacAddr() ([]string, error) {
@@ -85,4 +148,40 @@ func getMacAddr() ([]string, error) {
 		}
 	}
 	return as, nil
+}
+
+func readPrivateKey() (*lk.PrivateKey, error) {
+
+	pk, err := os.ReadFile("private.key")
+
+	if err != nil {
+		return nil, err
+	}
+
+	privateKey, err := lk.PrivateKeyFromB32String(string(pk))
+
+	if err != nil {
+		return nil, err
+	}
+
+	return privateKey, nil
+
+}
+
+func readPublicKey() (*lk.PublicKey, error) {
+
+	pk, err := os.ReadFile("private.key")
+
+	if err != nil {
+		return nil, err
+	}
+
+	publicKey, err := lk.PublicKeyFromB32String(string(pk))
+
+	if err != nil {
+		return nil, err
+	}
+
+	return publicKey, nil
+
 }
