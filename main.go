@@ -106,7 +106,7 @@ func validateLicenseFile() (bool, error) {
 	if ok, err := license.Verify(publicKey); err != nil {
 		return false, err
 	} else if !ok {
-		return false, fmt.Errorf("Invalid license")
+		return false, fmt.Errorf("invalid license")
 	}
 
 	// unmarshall the document:
