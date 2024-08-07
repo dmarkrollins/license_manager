@@ -170,7 +170,7 @@ func readPrivateKey() (*lk.PrivateKey, error) {
 
 func readPublicKey() (*lk.PublicKey, error) {
 
-	pk, err := os.ReadFile("private.key")
+	pk, err := os.ReadFile("public.key")
 
 	if err != nil {
 		return nil, err
